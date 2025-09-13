@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -20,7 +19,6 @@ from pricer.core.exceptions import (
     BackMarketNotFoundError,
     BackMarketRateLimitError,
     BackMarketServerError,
-    BackMarketWAFError,
 )
 from pricer.core.settings import Settings
 from pricer.bm.requester.identity import default_headers
@@ -35,33 +33,9 @@ logger = logging.getLogger(__name__)
 ALLOWED_METHODS = {"GET", "POST", "PUT"}
 
 
-def _is_html(content_type: str | None) -> bool:
-    return (content_type or "").lower().startswith("text/html")
-
-
 def _looks_like_json(text: str) -> bool:
-    t = text.strip()
+    t = (text or "").strip()
     return (t.startswith("{") and t.endswith("}")) or (t.startswith("[") and t.endswith("]"))
-
-
-def _looks_like_waf_text(text: str) -> bool:
-    t = text.lower()
-    return (
-        ("cloudflare" in t and "attention required" in t)
-        or ("just a moment" in t)
-        or ("checking your browser" in t)
-        or ("cf-ray" in t)
-        or ("ddos" in t and "protection" in t)
-    )
-
-
-def _parse_retry_after(h: str | None) -> int | None:
-    if not h:
-        return None
-    try:
-        return int(h)
-    except Exception:
-        return None
 
 
 def _effective_proxy_for_url(url: str) -> str | None:
@@ -78,18 +52,58 @@ def _effective_proxy_for_url(url: str) -> str | None:
     return None
 
 
+class _TrackerAdapter:
+    """Guarantees `.record(**event)` and proxies `.maybe_flush(run_id)` for whatever tracker impl you have."""
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+        self._buffer: list[dict[str, Any]] = []
+
+    def record(self, **event: Any) -> None:
+        for name in ("record", "record_event", "add", "add_event", "track", "log", "note"):
+            fn = getattr(self._inner, name, None)
+            if not fn:
+                continue
+            try:
+                fn(**event)
+                return
+            except TypeError:
+                try:
+                    fn(event)
+                    return
+                except Exception:
+                    continue
+            except Exception:
+                continue
+        self._buffer.append(dict(event))
+
+    def maybe_flush(self, run_id: str) -> dict[str, Any] | None:
+        inner_flush = getattr(self._inner, "maybe_flush", None)
+        snap = None
+        if callable(inner_flush):
+            try:
+                snap = inner_flush(run_id)
+            except Exception:
+                snap = None
+        if self._buffer:
+            buf = self._buffer
+            self._buffer = []
+            return {"run_id": run_id, "snapshots": buf}
+        return snap
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+
 class Requester:
-    """
-    Run-scoped requester: owns session, rate limits & circuit breakers.
-    Public methods: send(), paginate().
-    """
+    """Run-scoped requester with per-category rate buckets, circuit breakers, and a learning tracker."""
 
     def __init__(self, settings: Settings, run_id: str, endpoint_rates_repo=None) -> None:
         self.settings = settings
         self.run_id = run_id
         self.endpoint_rates_repo = endpoint_rates_repo
 
-        # ----- Per-category token buckets -----
+        # Per-category token buckets (buyback is deliberately conservative)
         self._buckets: dict[str, TokenBucket] = {
             "seller_generic": TokenBucket(
                 max_per_window=settings.seller_generic_max_per_window,
@@ -99,21 +113,26 @@ class Requester:
                 max_per_window=getattr(settings, "seller_mutations_max_per_window", 20),
                 window_seconds=settings.rate_window_seconds,
             ),
+            "buyback": TokenBucket(
+                max_per_window=getattr(settings, "buyback_max_per_window", 30),  # ~1 req / 2s if window=60s
+                window_seconds=settings.rate_window_seconds,
+            ),
         }
 
         self._global_sem = asyncio.Semaphore(self.settings.global_max_concurrency)
 
-        # ----- Circuit breakers -----
+        # Circuit breakers (do NOT open the breaker on 429; see send())
         self._breakers: dict[str, CircuitBreaker] = {
             "seller_generic": CircuitBreaker(fail_threshold=5, cooldown_seconds=60),
             "seller_mutations": CircuitBreaker(fail_threshold=5, cooldown_seconds=60),
+            "buyback": CircuitBreaker(fail_threshold=5, cooldown_seconds=60),
         }
 
         self._session: aiohttp.ClientSession | None = None
         self._connector: aiohttp.TCPConnector | None = None
 
-        # Learning tracker
-        self.tracker = LearningTracker()
+        # Learning tracker with compatibility wrapper
+        self.tracker = _TrackerAdapter(LearningTracker())
 
     async def __aenter__(self) -> "Requester":
         await self.start()
@@ -141,34 +160,27 @@ class Requester:
         log_json("requester_started", run_id=self.run_id)
 
     async def close(self) -> None:
-        # ensure we persist a baseline snapshot even if no 429s occurred
-        await self._maybe_flush_learning(force=True)
+        await self._maybe_flush_learning()
         if self._session and not self._session.closed:
             await self._session.close()
         if self._connector:
             await self._connector.close()
         log_json("requester_closed", run_id=self.run_id)
 
-    # ---------------- Learning flush ----------------
-
-    async def _maybe_flush_learning(self, force: bool = False) -> None:
-        snap = self.tracker.maybe_flush(self.run_id, force=force)
+    async def _maybe_flush_learning(self) -> None:
+        snap = self.tracker.maybe_flush(self.run_id)
         if snap and self.endpoint_rates_repo:
             try:
                 await self.endpoint_rates_repo.insert_snapshots(snap["snapshots"])
-                log_json(
-                    "learning_snapshot_persisted",
-                    run_id=self.run_id,
-                    count=len(snap["snapshots"]),
-                )
+                log_json("learning_snapshot_persisted", run_id=self.run_id, count=len(snap["snapshots"]))
             except Exception as e:
-                log_json(
-                    "learning_persist_error",
-                    run_id=self.run_id,
-                    error=str(e)[:300],
-                )
+                log_json("learning_persist_error", run_id=self.run_id, error=str(e)[:300])
 
-    # ---------------- Public API ----------------
+    def _track_event(self, *, endpoint_tag: str, status: int, elapsed_ms: int) -> None:
+        try:
+            self.tracker.record(endpoint_tag=endpoint_tag, status=status, elapsed_ms=elapsed_ms, ts=time.time())
+        except Exception:
+            pass
 
     async def send(
         self,
@@ -222,13 +234,7 @@ class Requester:
             attempts += 1
             slept = await bucket.acquire()
             if slept:
-                log_json(
-                    "rate_sleep",
-                    run_id=self.run_id,
-                    endpoint_tag=endpoint_tag,
-                    category=category,
-                    sleep_ms=int(slept * 1000),
-                )
+                log_json("rate_sleep", run_id=self.run_id, endpoint_tag=endpoint_tag, category=category, sleep_ms=int(slept * 1000))
 
             effective_proxy = _effective_proxy_for_url(url)
             log_json(
@@ -257,7 +263,6 @@ class Requester:
                         ct = (resp.headers.get("Content-Type") or "").lower()
                         body_text = await resp.text()
                         elapsed_ms = int((time.perf_counter() - started) * 1000)
-                        cf_ray = resp.headers.get("cf-ray")
 
                         log_json(
                             "http_response",
@@ -266,17 +271,15 @@ class Requester:
                             status=status,
                             content_type=ct,
                             elapsed_ms=elapsed_ms,
-                            cf_ray=cf_ray,
+                            cf_ray=resp.headers.get("cf-ray"),
                         )
 
-                        # --- Handle success ---
+                        # Success
                         if 200 <= status < 300:
                             br and br.record_success()
                             if hasattr(bucket, "record_ok"):
                                 bucket.record_ok(getattr(self.settings, "rl_recover_after_ok", 10))
-
-                            # record ok in tracker and opportunistically flush
-                            self.tracker.record_ok(endpoint_tag, category)
+                            self._track_event(endpoint_tag=endpoint_tag, status=status, elapsed_ms=elapsed_ms)
                             await self._maybe_flush_learning()
 
                             if status == 204:
@@ -285,19 +288,31 @@ class Requester:
                                 return await resp.json(content_type=None)
                             return body_text.strip() or None
 
-                        # --- Handle errors ---
+                        # Rate limit: DO NOT trip the circuit breaker for 429.
                         if status == 429:
-                            # track rate-limit & penalize
-                            self.tracker.record_429(endpoint_tag, category)
-                            br and br.record_failure()
                             if hasattr(bucket, "penalize"):
                                 bucket.penalize(getattr(self.settings, "rl_penalty_factor", 0.5))
+                            self._track_event(endpoint_tag=endpoint_tag, status=status, elapsed_ms=elapsed_ms)
+                            await self._maybe_flush_learning()
+
+                            # Respect Retry-After if present; otherwise fall back to ~1.2s
+                            retry_after = resp.headers.get("Retry-After")
+                            delay_s = 0.0
+                            try:
+                                if retry_after:
+                                    delay_s = float(retry_after)
+                            except Exception:
+                                delay_s = 0.0
+                            delay_s = delay_s or (getattr(self.settings, "buyback_429_sleep_ms", 1200) / 1000.0)
+                            await asyncio.sleep(delay_s)
+
                             raise BackMarketRateLimitError("429 Too Many Requests")
 
+                        # Server errors -> breaker failure
                         if 500 <= status < 600:
-                            # track 5xx as well
-                            self.tracker.record_5xx(endpoint_tag, category)
                             br and br.record_failure()
+                            self._track_event(endpoint_tag=endpoint_tag, status=status, elapsed_ms=elapsed_ms)
+                            await self._maybe_flush_learning()
                             raise BackMarketServerError(body_text[:500])
 
                         if status == 400:
@@ -305,13 +320,14 @@ class Requester:
                         if status == 401:
                             raise BackMarketAuthError(body_text[:500])
                         if status == 403:
+                            br and br.record_failure()
                             raise BackMarketForbiddenError(body_text[:500])
                         if status == 404:
-                            if retry_404 and attempts < 3:
-                                # let retry loop handle; fall through to exception below
-                                pass
-                            else:
-                                raise BackMarketNotFoundError(body_text[:500])
+                            if retry_404:
+                                br and br.record_failure()
+                                self._track_event(endpoint_tag=endpoint_tag, status=status, elapsed_ms=elapsed_ms)
+                                await self._maybe_flush_learning()
+                            raise BackMarketNotFoundError(body_text[:500])
 
                         raise BackMarketAPIError(f"Unexpected status {status}: {body_text[:300]}")
 
@@ -340,18 +356,28 @@ class Requester:
         category: str,
         max_pages_guard: int | None = None,
         max_attempts_per_page: int = 12,
+        cursor_param: str | None = None,
+        next_field: str = "next",
+        sleep_between_pages_ms: int = 0,
     ) -> list[dict[str, Any]]:
         """
-        Sequential pagination following 'next' links.
-        Retries each page with backoff.
+        Generic sequential pagination. Supports page-number OR cursor style.
+        In cursor mode, the API must return an absolute 'next' URL in `next_field`.
+
+        `sleep_between_pages_ms` – optional fixed pause after a successful page to keep endpoints happy.
         """
         assert self._session is not None, "Requester not started"
 
         pages: list[dict[str, Any]] = []
-        current_url = urljoin(self.settings.bm_base_url, path.lstrip("/"))
+        base_url = urljoin(self.settings.bm_base_url, path.lstrip("/"))
         qs: Optional[Mapping[str, Any]] = dict(params or {})
-        qs[size_param] = page_size
-        qs[page_param] = 1
+
+        if cursor_param:
+            if size_param:
+                qs[size_param] = page_size
+        else:
+            qs[size_param] = page_size
+            qs[page_param] = 1
 
         seen_pages = 0
         expected_pages: int | None = None
@@ -360,41 +386,35 @@ class Requester:
             "paginate_start",
             run_id=self.run_id,
             endpoint_tag=endpoint_tag,
-            url=current_url,
+            url=base_url,
             page_size=page_size,
             params=(dict(params) if params else {}),
         )
 
+        current_url = base_url
         while True:
             attempt = 0
             last_exc: Exception | None = None
 
             while attempt < max_attempts_per_page:
                 attempt += 1
+                log_json(
+                    "paginate_request_debug",
+                    run_id=self.run_id,
+                    endpoint_tag=endpoint_tag,
+                    page_index=seen_pages + 1,
+                    current_url=current_url,
+                    qs=qs,
+                )
                 try:
-                    log_json(
-                        "paginate_request_debug",
-                        run_id=self.run_id,
-                        endpoint_tag=endpoint_tag,
-                        page_index=seen_pages + 1,
-                        current_url=current_url,
-                        qs=qs,
-                    )
-
-                    payload = await self.send(
-                        "GET",
-                        current_url,
-                        params=qs,
-                        endpoint_tag=endpoint_tag,
-                        category=category,
-                    )
+                    payload = await self.send("GET", current_url, params=qs, endpoint_tag=endpoint_tag, category=category)
                     if not isinstance(payload, dict):
                         raise BackMarketDataError("Expected JSON object page")
 
                     pages.append(payload)
                     seen_pages += 1
 
-                    if expected_pages is None and isinstance(payload.get("count"), int):
+                    if not cursor_param and expected_pages is None and isinstance(payload.get("count"), int):
                         total = payload["count"]
                         expected_pages = max(1, (total + page_size - 1) // page_size)
 
@@ -407,26 +427,16 @@ class Requester:
                         results_count=len(payload.get("results") or []),
                     )
 
-                    nxt = payload.get("next")
-                    log_json(
-                        "paginate_next_debug",
-                        run_id=self.run_id,
-                        endpoint_tag=endpoint_tag,
-                        page_index=seen_pages,
-                        next_url=nxt,
-                    )
+                    nxt = payload.get(next_field)
+                    log_json("paginate_next_debug", run_id=self.run_id, endpoint_tag=endpoint_tag, page_index=seen_pages, next_url=nxt)
 
                     if not nxt:
-                        log_json(
-                            "paginate_complete",
-                            run_id=self.run_id,
-                            endpoint_tag=endpoint_tag,
-                            pages=seen_pages,
-                            expected_pages=expected_pages,
-                        )
-                        # force a snapshot at the end of a clean run
-                        await self._maybe_flush_learning(force=True)
+                        log_json("paginate_complete", run_id=self.run_id, endpoint_tag=endpoint_tag, pages=seen_pages, expected_pages=expected_pages)
                         return pages
+
+                    # Friendly fixed pause between pages (esp. for buyback cursor)
+                    if sleep_between_pages_ms > 0:
+                        await asyncio.sleep(sleep_between_pages_ms / 1000.0)
 
                     if max_pages_guard is None and expected_pages:
                         guard = expected_pages * 5
@@ -436,7 +446,7 @@ class Requester:
                         raise BackMarketAPIError("Pagination guard tripped")
 
                     current_url = nxt
-                    qs = None
+                    qs = None  # absolute next URL already includes params
                     break
 
                 except Exception as exc:
@@ -454,16 +464,13 @@ class Requester:
                     await asyncio.sleep(delay_ms / 1000.0)
 
             if attempt >= max_attempts_per_page:
-                err_msg = f"Failed to fetch page {seen_pages + 1} after {max_attempts_per_page} attempts"
-                log_json(
-                    "paginate_page_failed",
-                    run_id=self.run_id,
-                    endpoint_tag=endpoint_tag,
-                    page_index=seen_pages + 1,
-                    attempts=max_attempts_per_page,
-                    error=str(last_exc)[:500] if last_exc else "unknown",
-                )
-                raise BackMarketAPIError(err_msg) from last_exc
+                raise BackMarketAPIError(f"Failed to fetch page {seen_pages + 1} after {max_attempts_per_page} attempts") from last_exc
+
+
+
+
+
+
 
 
 

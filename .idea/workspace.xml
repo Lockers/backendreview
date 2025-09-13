@@ -4,7 +4,20 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="69e554aa-acd5-420c-9998-8a6cd221ce5c" name="Changes" comment="" />
+    <list default="true" id="69e554aa-acd5-420c-9998-8a6cd221ce5c" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/bm/endpoints/buyback_listings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/bm/endpoints/buyback_listings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/bm/requester/client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/bm/requester/client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/bm/requester/learning_tracker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/bm/requester/learning_tracker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/core/grouping/tradein_groups_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/core/grouping/tradein_groups_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/db/repositories/buyback_repo.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/db/repositories/buyback_repo.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/db/repositories/endpoint_rates_repo.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/db/repositories/endpoint_rates_repo.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/web/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/web/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/web/deps.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/web/deps.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/web/routers/buyback.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/web/routers/buyback.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/web/routers/listings.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/web/routers/listings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pricer/web/routers/run.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pricer/web/routers/run.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -20,6 +33,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "Lockers"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/Lockers/backendreview.git",
+    "accountId": "c15f82ea-bfb6-4be2-8003-81b09ce1838e"
+  }
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 4
 }</component>
@@ -36,7 +61,7 @@
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "feature/inject-cracked-groups",
+    "git-widget-placeholder": "main",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -63,7 +88,7 @@
       <workItem from="1756688058947" duration="11446000" />
       <workItem from="1756793702822" duration="36045000" />
       <workItem from="1757501388214" duration="11314000" />
-      <workItem from="1757748944661" duration="5546000" />
+      <workItem from="1757748944661" duration="15717000" />
     </task>
     <servers />
   </component>

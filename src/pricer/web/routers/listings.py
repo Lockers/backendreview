@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import logging
-import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Set
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Query, Request
 
 from pricer.core.settings import Settings
 from pricer.bm.requester.client import Requester
@@ -14,31 +12,30 @@ from pricer.utils.logging import log_json
 
 router = APIRouter(tags=["listings"])
 
-logger = logging.getLogger(__name__)
 
-
-# ---------- PURE SERVICE (no FastAPI objects) ----------
 async def scan_listings_core(
     *,
     settings: Settings,
-    mongo,
+    mongo: Any,
     page_size: int,
     include_raw: bool,
     save: bool,
+    baseline_run_id: Optional[str] = None,
+    endpoint_rates_repo: Any = None,
 ) -> Dict[str, Any]:
     """
-    Fetch Back Market listings via /ws/listings and (optionally) persist to Mongo.
-
-    Returns a dict with counts + basic persist summary.
+    Fetch all SELL listings with page-number pagination.
+    - If save=True: upsert to `bm_listings` with timestamps.
+    - If baseline_run_id is provided: stamp {baseline_run_id, was_active}.
     """
-    run_id = f"ls-scan-{int(time.time())}"
-    total_items = 0
-    pages_seen = 0
-    collected: List[Dict[str, Any]] = []
+    rid = f"scan-{int(time.time() * 1000)}"
+    pages = 0
+    total_count: Optional[int] = None
+    samples: List[Dict[str, Any]] = []
+    written_total = 0
 
-    # Call BM with the shared Requester
-    async with Requester(settings, run_id=run_id) as req:
-        pages = await req.paginate(
+    async with Requester(settings, rid, endpoint_rates_repo=endpoint_rates_repo) as req:
+        all_pages = await req.paginate(
             "/ws/listings",
             page_param="page",
             size_param="page-size",
@@ -46,138 +43,98 @@ async def scan_listings_core(
             params={},
             endpoint_tag="listings_get_all",
             category="seller_generic",
+            cursor_param=None,
         )
 
-    pages_seen = len(pages)
+    coll = mongo.listings(getattr(settings, "mongo_coll_listings", "bm_listings"))
 
-    # Flatten results from each page (handle a couple of possible shapes)
-    for page in pages:
-        items = None
-        if isinstance(page, dict):
-            if "results" in page and isinstance(page["results"], list):
-                items = page["results"]
-            elif "listings" in page and isinstance(page["listings"], list):
-                items = page["listings"]
-        if not items:
-            continue
+    now = datetime.now(timezone.utc)
+    for p in all_pages:
+        pages += 1
+        if total_count is None and isinstance(p.get("count"), int):
+            total_count = p["count"]
 
-        for it in items:
-            if not isinstance(it, dict):
-                continue
+        items = p.get("results") or p.get("listings") or []
+        if not isinstance(items, list):
+            items = []
 
-            # Keep original object (include_raw toggle stays here if you want to trim later)
-            doc = dict(it)
-
-            # Normalize id
-            doc["id"] = doc.get("id") or doc.get("listing_id")
-            if not doc["id"]:
-                continue
-
-            # Normalize numeric fields that we rely on later
-            qty = doc.get("quantity")
-            try:
-                qty = int(qty) if qty is not None else 0
-            except Exception:
-                qty = 0
-            doc["quantity"] = qty
-
-            for price_key in ("max_price", "min_price"):
-                if price_key in doc and doc[price_key] is not None:
-                    try:
-                        doc[price_key] = float(doc[price_key])
-                    except Exception:
-                        # leave as-is if it truly can't be parsed
-                        pass
-
-            # Compute 'active' flag (simple rule: quantity > 0)
-            pub_state = doc.get("publication_state")
-            # If you want stricter, uncomment next line:
-            # doc["active"] = (qty > 0) and (pub_state in (3, 4))
-            doc["active"] = (qty > 0)
-
-            collected.append(doc)
-
-    total_items = len(collected)
-
-    persist: Dict[str, Any] = {}
-    if save and total_items:
-        coll = mongo.listings(settings.mongo_coll_listings)
-
-        # Upsert concurrently in batches
-        async def upsert_many(docs: List[Dict[str, Any]], *, scan_run_id: str) -> int:
-            from pymongo import UpdateOne  # type: ignore
-
-            now = datetime.now(timezone.utc).replace(tzinfo=None)  # store as UTC naive for Mongo
+        if save and items:
             ops = []
-            for d in docs:
-                key = {"id": d["id"]}
+            from pymongo import UpdateOne  # local import to avoid global dependency at import time
+            for it in items:
+                lid = it.get("id") or it.get("listing_id")
+                if not lid:
+                    continue
 
-                # Always refresh updated_at; create created_at only once.
-                # Tag with current scan_run_id for traceability.
-                update = {
-                    "$set": {
-                        **d,
-                        "updated_at": now,
-                        "scan_run_id": scan_run_id,
-                    },
-                    "$setOnInsert": {
-                        "created_at": now,
-                    },
+                qty = it.get("quantity") or 0
+                try:
+                    qty = int(qty)
+                except Exception:
+                    qty = 0
+
+                doc = dict(it)
+                doc["last_seen_at"] = now
+
+                update_doc: Dict[str, Any] = {
+                    "$set": doc,
+                    "$setOnInsert": {"created_at": now},
+                    "$currentDate": {"updated_at": True},
                 }
-                ops.append(UpdateOne(key, update, upsert=True))
+                if baseline_run_id:
+                    update_doc["$set"]["baseline_run_id"] = baseline_run_id
+                    update_doc["$set"]["was_active"] = (qty > 0)
 
-            if not ops:
-                return 0
+                ops.append(UpdateOne({"id": str(lid)}, update_doc, upsert=True))
 
-            res = await coll.bulk_write(ops, ordered=False)
-            # Count all affected docs (modified + matched + upserted)
-            return int(
-                (res.upserted_count or 0)
-                + (res.modified_count or 0)
-                + (res.matched_count or 0)
-            )
+            if ops:
+                res = await coll.bulk_write(ops, ordered=False)
+                written_total += int(res.upserted_count + res.modified_count)
 
-        # Chunk into reasonable batches
-        BATCH = 1_000
-        written = 0
-        for i in range(0, len(collected), BATCH):
-            written += await upsert_many(collected[i : i + BATCH], scan_run_id=run_id)
-
-        persist = {
-            "written": written,
-            "collection": settings.mongo_coll_listings,
-            "scan_run_id": run_id,
-        }
+        if not samples and items:
+            for it in items[:3]:
+                samples.append(
+                    {
+                        "id": it.get("id") or it.get("listing_id"),
+                        "active": (int(it.get("quantity") or 0) > 0),
+                        "price": it.get("price"),
+                        "max_price": it.get("max_price"),
+                        "min_price": it.get("min_price"),
+                        "quantity": it.get("quantity"),
+                        "publication_state": it.get("publication_state"),
+                        "sku": it.get("sku"),
+                    }
+                )
 
     return {
-        "run_id": run_id,
-        "count": total_items,
-        "pages": pages_seen,
-        "persist": persist,
-        "sample": collected[:3],
+        "count": total_count if total_count is not None else 0,
+        "pages": pages,
+        "persist": {"written": written_total, "collection": getattr(settings, "mongo_coll_listings", "bm_listings")} if save else None,
+        "sample": samples if not include_raw else all_pages[:1],
     }
 
 
-# ---------- FASTAPI ENDPOINT (calls the pure service) ----------
 @router.get("/bm/listings/scan")
 async def scan_listings(
     request: Request,
-    response: Response,
     page_size: int = Query(50, ge=1, le=100),
     include_raw: bool = Query(False),
     save: bool = Query(True),
-):
+) -> Dict[str, Any]:
     settings: Settings = request.app.state.settings
     mongo = request.app.state.mongo
+    endpoint_rates_repo = getattr(request.app.state, "endpoint_rates_repo", None)
 
-    result = await scan_listings_core(
+    return await scan_listings_core(
         settings=settings,
         mongo=mongo,
         page_size=page_size,
         include_raw=include_raw,
         save=save,
+        baseline_run_id=None,
+        endpoint_rates_repo=endpoint_rates_repo,
     )
-    return result
+
+
 
 
 

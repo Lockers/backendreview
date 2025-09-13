@@ -1,40 +1,62 @@
 from __future__ import annotations
-from typing import Iterable, Mapping
-from motor.motor_asyncio import AsyncIOMotorCollection
-from pymongo import UpdateOne, IndexModel, ASCENDING
 
-async def ensure_indexes(coll: AsyncIOMotorCollection) -> None:
-    await coll.create_indexes([
-        IndexModel([("_id", ASCENDING)], name="pk_id"),
-        IndexModel([("productId", ASCENDING)], name="product"),
-        IndexModel([("aestheticGradeCode", ASCENDING)], name="grade_code"),
-        IndexModel([("markets", ASCENDING)], name="markets"),
-    ])
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, Optional
 
-def _doc(item: Mapping) -> dict:
-    d = dict(item)
-    d["_id"] = d["id"]  # Back Market buyback listing id
-    return d
+try:
+    from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection
+    from pymongo import UpdateOne
+except Exception:  # pragma: no cover
+    AsyncIOMotorDatabase = Any  # type: ignore
+    AsyncIOMotorCollection = Any  # type: ignore
+    UpdateOne = Any  # type: ignore
 
-async def bulk_upsert(coll: AsyncIOMotorCollection, items: Iterable[Mapping], batch_size: int = 1000) -> dict:
-    ops = []
-    matched = modified = upserted = batches = 0
-    for it in items:
-        d = _doc(it)
-        _id = d["_id"]
-        update = {k: v for k, v in d.items() if k != "_id"}
-        ops.append(UpdateOne({"_id": _id}, {"$set": update, "$setOnInsert": {"created_at": d.get("created_at")}}, upsert=True))
-        if len(ops) >= batch_size:
-            res = await coll.bulk_write(ops, ordered=False, bypass_document_validation=True)
-            matched += res.matched_count or 0
-            modified += res.modified_count or 0
-            upserted += len(res.upserted_ids or {})
-            batches += 1
-            ops = []
-    if ops:
-        res = await coll.bulk_write(ops, ordered=False, bypass_document_validation=True)
-        matched += res.matched_count or 0
-        modified += res.modified_count or 0
-        upserted += len(res.upserted_ids or {})
-        batches += 1
-    return {"matched": matched, "modified": modified, "upserted": upserted, "batches": batches}
+
+class BuybackRepo:
+    """
+    Simple repo to upsert buyback listings with timestamps.
+    """
+
+    def __init__(self, db_or_mongo: Any, coll_name: str = "bm_buyback_listings") -> None:
+        if hasattr(db_or_mongo, "db") and getattr(db_or_mongo, "db") is not None:
+            self.db: AsyncIOMotorDatabase = db_or_mongo.db  # type: ignore[assignment]
+        else:
+            self.db = db_or_mongo  # type: ignore[assignment]
+
+        self.collection: AsyncIOMotorCollection = self.db[coll_name]  # type: ignore[index]
+
+    async def upsert_many(self, docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+        ops = []
+        now = datetime.now(timezone.utc)
+
+        for raw in docs:
+            if not raw or not isinstance(raw, dict):
+                continue
+            doc = dict(raw)
+            _id = doc.get("id")
+            if not _id:
+                continue
+
+            # Always stamp last-seen server time
+            doc["last_seen_at"] = now
+
+            ops.append(
+                UpdateOne(
+                    {"id": _id},
+                    {
+                        "$set": doc,
+                        "$setOnInsert": {"created_at": now},
+                        "$currentDate": {"updated_at": True},
+                    },
+                    upsert=True,
+                )
+            )
+
+        if not ops:
+            return {"written": 0, "collection": self.collection.name}
+
+        res = await self.collection.bulk_write(ops, ordered=False)
+        return {"written": res.upserted_count + res.modified_count, "collection": self.collection.name}
+
+
+

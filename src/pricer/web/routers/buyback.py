@@ -1,89 +1,100 @@
 from __future__ import annotations
+
 import time
-from fastapi import APIRouter, HTTPException, Query, Response, Request, status
+from typing import Any, Dict, List, Optional
 
-from pricer.web.deps import get_requester_factory, new_run_id
-from pricer.core.exceptions import (
-    BackMarketAPIError,
-    BackMarketAuthError,
-    BackMarketForbiddenError,
-    BackMarketRateLimitError,
-    BackMarketServerError,
-    BackMarketWAFError,
-)
-from pricer.bm.endpoints import buyback_listings
-from pricer.db.repositories import buyback_repo
+from fastapi import APIRouter, Query, Request
 
-router = APIRouter(prefix="/bm/buyback", tags=["backmarket:buyback"])
+from pricer.core.settings import Settings
+from pricer.bm.requester.client import Requester
+from pricer.db.repositories.buyback_repo import BuybackRepo
+from pricer.utils.logging import log_json
 
-@router.get("/scan")
+router = APIRouter(tags=["buyback"])
+
+
+@router.get("/bm/buyback/scan")
 async def scan_buyback_listings(
     request: Request,
-    response: Response,
-    run_id: str | None = Query(default=None),
-    page_size: int = Query(default=100, ge=1, le=100),
-    cursor: str | None = Query(default=None, description="Start cursor (uuid)"),
-    product_id: str | None = Query(default=None),
-    include_raw: bool = Query(default=False),
-    save: bool = Query(default=True),
-):
-    settings = request.app.state.settings
+    page_size: int = Query(100, ge=1, le=100),
+    include_raw: bool = Query(False),
+    save: bool = Query(True),
+) -> Dict[str, Any]:
+    """
+    Fetch all trade-in (buyback) listings via cursor pagination.
+    - Persists docs with timestamps when `save=True`.
+    - Emits per-endpoint learning snapshots (buyback category).
+    - Returns a summary (and an optional sample for sanity).
+    """
+    settings: Settings = request.app.state.settings
     mongo = request.app.state.mongo
-    rid = run_id or new_run_id()
-    started = time.perf_counter()
+    endpoint_rates_repo = getattr(request.app.state, "endpoint_rates_repo", None)
+
+    rid = f"run-{int(time.time() * 1000)}"
+    log_json("buyback_scan_start", run_id=rid, page_size=page_size, save=save)
+
+    written_total = 0
+    pages = 0
+    samples: List[Dict[str, Any]] = []
 
     try:
-        async with get_requester_factory(settings).new(rid) as requester:
-            result = await buyback_listings.fetch(
-                requester,
-                run_id=rid,
+        async with Requester(settings, rid, endpoint_rates_repo=endpoint_rates_repo) as req:
+            all_pages = await req.paginate(
+                "/ws/buyback/v1/listings",
+                size_param="pageSize",
                 page_size=page_size,
-                cursor=cursor,
-                product_id=product_id,
-                include_raw=include_raw,
-                accept_language=settings.bm_accept_language,
+                params={},
+                endpoint_tag="buyback_listings",
+                category="buyback",
+                cursor_param="cursor",   # enable cursor mode
+                next_field="next",
             )
-    except BackMarketWAFError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail={"run_id": rid, "error": "WAF_BLOCK", "detail": str(e)})
-    except BackMarketAuthError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail={"run_id": rid, "error": "UPSTREAM_AUTH", "detail": str(e)})
-    except BackMarketForbiddenError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail={"run_id": rid, "error": "UPSTREAM_FORBIDDEN", "detail": str(e)})
-    except BackMarketRateLimitError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail={"run_id": rid, "error": "RATE_LIMIT", "detail": str(e)})
-    except BackMarketServerError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail={"run_id": rid, "error": "UPSTREAM_FAILURE", "detail": str(e)})
-    except BackMarketAPIError as e:
-        response.headers["X-Run-Id"] = rid
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail={"run_id": rid, "error": "UPSTREAM_DATA", "detail": str(e)})
 
-    # Optional persistence
-    persist = {}
-    if save:
-        coll = mongo.listings(settings.mongo_coll_buyback_listings)
-        await buyback_repo.ensure_indexes(coll)
-        persist = await buyback_repo.bulk_upsert(coll, result["items"], batch_size=1000)
+        repo = BuybackRepo(mongo)
 
-    duration_ms = int((time.perf_counter() - started) * 1000)
-    result["meta"]["duration_ms"] = duration_ms  # type: ignore[index]
-    result["run_id"] = rid
-    result["country"] = settings.bm_accept_language
+        for p in all_pages:
+            pages += 1
+            items = p.get("results") or []
+            if not isinstance(items, list):
+                items = []
+            if save and items:
+                res = await repo.upsert_many(items)
+                written_total += int(res.get("written", 0))
+            if not samples and items:
+                # keep a small sample for visibility
+                for it in items[:3]:
+                    samples.append(
+                        {
+                            "id": it.get("id"),
+                            "productId": it.get("productId"),
+                            "sku": it.get("sku"),
+                            "aestheticGradeCode": it.get("aestheticGradeCode"),
+                            "prices": it.get("prices"),
+                            "markets": it.get("markets"),
+                        }
+                    )
 
-    response.headers["X-Run-Id"] = rid
-    response.headers["X-Items-Count"] = str(result["meta"]["count_seen"])  # type: ignore[index]
-    response.headers["X-Scan-Duration-Ms"] = str(duration_ms)
+        summary: Dict[str, Any] = {
+            "run_id": rid,
+            "pages": pages,
+            "persist": {"written": written_total, "collection": "bm_buyback_listings"} if save else None,
+            "sample": samples if not include_raw else all_pages[:1],  # avoid massive payloads
+        }
+        log_json("buyback_scan_complete", run_id=rid, pages=pages, written=written_total)
+        return summary
 
-    if save:
-        result["meta"]["persist"] = persist  # type: ignore[index]
-    return result
+    except Exception as e:
+        log_json("buyback_scan_error", run_id=rid, error=str(e)[:400])
+        # Return partial summary instead of 500-ing, so the run can still proceed / debug
+        return {
+            "run_id": rid,
+            "error": str(e),
+            "pages": pages,
+            "persist": {"written": written_total, "collection": "bm_buyback_listings"} if save else None,
+            "sample": samples,
+        }
+
+
+
+
+
