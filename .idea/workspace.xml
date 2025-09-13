@@ -4,82 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="69e554aa-acd5-420c-9998-8a6cd221ce5c" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/BackMarketPricer V5.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.pre-comit-config.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.ruff.toml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/scripts/check.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/scripts/dev-run.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/config/rates.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/endpoints/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/endpoints/buyback_listings.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/endpoints/listings_get_all.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/models/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/models/listing.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/adaptive_bucket.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/circuit_breaker.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/identity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/learning_tracker.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/rate_limiter.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/retry_policy.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/requester/telemetry.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/services/listing_service.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/bm/services/listings/activation.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/catalog/model_def.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/core/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/core/exceptions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/core/grouping/tradein_groups_builder.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/core/run_context.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/core/settings.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/mongo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/buyback_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/endpoint_rates_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/listings_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/pricer_baseline_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/sku_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/db/repositories/tradein_groups_repo.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/pricing/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/pricing/flows/sell_pricer_flow.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/pricing/schemas/pricing_dto.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/pricing/services/aggregator.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/pricing/services/profit_helpers.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/sku/validate.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/sku/validate_buyback.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/utils/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/utils/idempotency.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/utils/logging.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/utils/time.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/app.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/deps.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/activation.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/buyback.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/buyback_sku.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/health.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/listing_actions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/listings.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/pricer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/pricing.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/run.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/sku.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/pricer/web/routers/tradein_groups.py" afterDir="false" />
-    </list>
+    <list default="true" id="69e554aa-acd5-420c-9998-8a6cd221ce5c" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -106,20 +31,20 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "feature/inject-cracked-groups",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -138,12 +63,38 @@
       <workItem from="1756688058947" duration="11446000" />
       <workItem from="1756793702822" duration="36045000" />
       <workItem from="1757501388214" duration="11314000" />
-      <workItem from="1757748944661" duration="5152000" />
+      <workItem from="1757748944661" duration="5546000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="Branch">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="HEAD" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
